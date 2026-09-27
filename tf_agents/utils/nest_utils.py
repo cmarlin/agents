@@ -1097,6 +1097,18 @@ def get_outer_array_shape(nested_array, spec):
   return first_array.shape[:num_outer_dims]
 
 
+def _per_field_where(t, f, condition, condition_rank):
+  """tf.where on one field, broadcasting `condition` to `t`'s rank."""
+  tf.debugging.assert_rank_at_least(t, condition_rank)
+  rank_difference = tf.rank(t) - condition_rank
+  condition_shape = tf.concat(
+      [tf.shape(condition), tf.ones(rank_difference, dtype=tf.int32)],
+      axis=0,
+  )
+  per_field_condition = tf.reshape(condition, condition_shape)
+  return tf.compat.v2.where(per_field_condition, t, f)
+
+
 def where(condition, true_outputs, false_outputs):
   """Generalization of tf.where for nested structures.
 
@@ -1128,19 +1140,11 @@ def where(condition, true_outputs, false_outputs):
 
   if tf.nest.flatten(true_outputs):
     condition_rank = tf.rank(condition)
-
-    @tf.function  # allow-tf-function
-    def per_field_where(t, f):
-      tf.debugging.assert_rank_at_least(t, condition_rank)
-      rank_difference = tf.rank(t) - condition_rank
-      condition_shape = tf.concat(
-          [tf.shape(condition), tf.ones(rank_difference, dtype=tf.int32)],
-          axis=0,
-      )
-      per_field_condition = tf.reshape(condition, condition_shape)
-      return tf.compat.v2.where(per_field_condition, t, f)
-
-    return tf.nest.map_structure(per_field_where, true_outputs, false_outputs)
+    return tf.nest.map_structure(
+        lambda t, f: _per_field_where(t, f, condition, condition_rank),
+        true_outputs,
+        false_outputs,
+    )
   else:
     return tf.nest.map_structure(
         lambda t, f: tf.compat.v2.where(condition, t, f),
